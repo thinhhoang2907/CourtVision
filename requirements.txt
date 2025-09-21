@@ -1,0 +1,5 @@
+streamlit==3.13.3
+pandas==2.3.2
+matplotlib==3.10.6
+plotly==6.3.0
+nba_api==1.10.0
