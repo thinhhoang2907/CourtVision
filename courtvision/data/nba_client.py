@@ -17,9 +17,6 @@ OFFLINE_DIR.mkdir(parents=True, exist_ok=True)
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# cache TTL in seconds (default 24 hours)
-CACHE_TTL_SECONDS = 24 * 3600
-
 def _save_json(path: Path, obj: dict):
     path.write_text(json.dumps(obj, indent=2), encoding="utf-8")
 
@@ -49,64 +46,18 @@ def _is_cache_fresh(path: Path, ttl_seconds: int = CACHE_TTL_SECONDS) -> bool:
         return False
 
 def find_player_basic(query: str):
-    """
-    Returns a dict with player_id, full_name, team, position (team/position may be empty if API call fails).
-    Caches basic info to speed up repeated demos.
-    """
     matches = players.find_players_by_full_name(query)
     if not matches:
         return None
-
     p = matches[0]
     pid = p["id"]
-
-    # Try cache first
-    info_cache = _cache_path_for_player_info(pid)
-    if info_cache.exists():
-        try:
-            info = _load_json(info_cache)
-            return info
-        except Exception:
-            pass  # fall through to API
-
-    # API call
-    try:
-        info_raw = _with_retries(lambda: commonplayerinfo.CommonPlayerInfo(player_id=pid, timeout=10).get_normalized_dict(), max_attempts=3)
-        row = info_raw["CommonPlayerInfo"][0]
-        info = {
-            "player_id": pid,
-            "full_name": row.get("DISPLAY_FIRST_LAST", p["full_name"]),
-            "team": row.get("TEAM_NAME", "") or "",
-            "position": row.get("POSITION", "") or "",
-            "last_updated": int(time.time()),
-        }
-        _save_json(info_cache, info)
-        return info
-    except Exception as exc:
-        logger.exception("commonplayerinfo failed for pid %s: %s", pid, exc)
-        # Minimal fallback if CommonPlayerInfo fails
-        return {
-            "player_id": pid,
-            "full_name": p.get("full_name", query),
-            "team": "",
-            "position": "",
-            "last_updated": None,
-        }
-
-def _format_percent_cols(df: pd.DataFrame) -> pd.DataFrame:
-    for col in ["FG%", "3P%", "FT%"]:
-        if col in df.columns:
-            # coerce to float, but guard empty/NaN
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0).astype(float)
-            # if values look like fractions (max <= 1), convert to percent scale
-            try:
-                if df[col].abs().max() <= 1.01:
-                    df[col] = df[col] * 100.0
-            except Exception:
-                # in case of all-NaN or unexpected dtypes, skip scaling
-                pass
-            df[col] = df[col].round(1)
-    return df
+    info = commonplayerinfo.CommonPlayerInfo(player_id=pid).get_normalized_dict()["CommonPlayerInfo"][0]
+    return {
+        "player_id": pid,
+        "full_name": info.get("DISPLAY_FIRST_LAST", p["full_name"]),
+        "team": info.get("TEAM_NAME", ""),
+        "position": info.get("POSITION", ""),
+    }
 
 def _convert_totals_to_per_game(df: pd.DataFrame) -> pd.DataFrame:
     """If the DataFrame appears to contain season totals (large PTS or MP), convert key totals to per-game averages by dividing by G.
@@ -423,9 +374,14 @@ def get_player_current_season_stats(player_id: int) -> pd.DataFrame:
             "SEASON_ID":"Season","GP":"G","MIN":"MP",
             "FG_PCT":"FG%","FG3_PCT":"3P%","FT_PCT":"FT%"
         })
-        # convert totals to per-game averages if needed, then normalize percent columns
-        totals = _convert_totals_to_per_game(totals)
-        totals = _format_percent_cols(totals)
+        # convert to display percentages (guarding bad types)
+        for pct in ["FG%","3P%","FT%"]:
+            if pct in totals.columns:
+                totals[pct] = pd.to_numeric(totals[pct], errors="coerce").fillna(0.0).astype(float)
+                if totals[pct].abs().max() <= 1.01:
+                    totals[pct] = (totals[pct] * 100.0).round(1)
+                else:
+                    totals[pct] = totals[pct].round(1)
         # cache for demo reliability
         try:
             totals.to_csv(cache_csv, index=False)
@@ -456,44 +412,6 @@ def get_player_current_season_stats(player_id: int) -> pd.DataFrame:
 
     # If we get here, give a clear empty frame
     return pd.DataFrame(columns=["Season","G","MP","PTS","REB","AST","STL","BLK","FG%","3P%","FT%"])
-
-def get_cached_player_stats_for_season(player_id: int, season: str) -> pd.DataFrame:
-    """Read cached per-player CSV and return a one-row DataFrame for the given season, or empty DataFrame if not found."""
-    cache_csv = _cache_path_for_player_totals(player_id)
-    if not cache_csv.exists():
-        return pd.DataFrame(columns=["Season","G","MP","PTS","REB","AST","STL","BLK","FG%","3P%","FT%"])
-    try:
-        df = pd.read_csv(cache_csv)
-        if 'Season' in df.columns:
-            sel = df[df['Season'] == season]
-            if not sel.empty:
-                return _format_percent_cols(sel)
-    except Exception:
-        pass
-    return pd.DataFrame(columns=["Season","G","MP","PTS","REB","AST","STL","BLK","FG%","3P%","FT%"])
-
-def get_player_season_series(player_id: int):
-    """Return a DataFrame of all cached seasons for a player (per-game values)."""
-    cache_csv = _cache_path_for_player_totals(player_id)
-    if not cache_csv.exists():
-        return pd.DataFrame()
-    try:
-        df = pd.read_csv(cache_csv)
-        if 'Season' in df.columns:
-            df = _format_percent_cols(df)
-            # ensure per-game conversion
-            df = _convert_totals_to_per_game(df)
-            # sort by season start
-            try:
-                df['SEASON_START'] = df['Season'].astype(str).str[:4].astype(int)
-                df = df.sort_values('SEASON_START')
-                df = df.drop(columns=['SEASON_START'])
-            except Exception:
-                pass
-            return df
-    except Exception:
-        pass
-    return pd.DataFrame()
 
 def _with_retries(func, max_attempts=3, backoff_base=2, *args, **kwargs):
     last_exc = None
