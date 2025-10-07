@@ -1,179 +1,113 @@
+# pages/2_Team_Stats.py
 import streamlit as st
 import pandas as pd
-import time
-import matplotlib.pyplot as plt
+
 from courtvision.data.nba_client import (
-	find_teams_by_name,
-	get_team_roster,
-	get_cached_player_stats_for_season,
-	get_player_stats_for_season,
-	get_player_season_series,
+    list_all_teams, recent_seasons,
+    get_team_basic_stats, get_team_roster, get_team_players_season_stats,
 )
 
 st.title("Team Stats")
 
-team_query = st.text_input("Search team by name or abbreviation", key='team_query')
-search = st.button("Search Team")
+# Controls
+c1, c2, c3 = st.columns([2,1,1])
+teams = list_all_teams()
+team_name = c1.selectbox("Team", options=[t["full_name"] for t in teams])
+season = c2.selectbox("Season", options=recent_seasons(10))
+refresh = c3.button("Refresh from API")
 
-if search and not st.session_state.team_query.strip():
-	st.warning("Please enter a team name or abbreviation.")
+team = next(t for t in teams if t["full_name"] == team_name)
+team_id = team["team_id"]
 
-if search and st.session_state.team_query.strip():
-	with st.spinner("Searching teams…"):
-		matches = find_teams_by_name(st.session_state.team_query.strip())
-	# store matches in session state so selection persists across reruns
-	st.session_state['team_matches'] = matches
-	# reset selected team key
-	if 'team_select' in st.session_state:
-		del st.session_state['team_select']
+# Header phrase
+st.markdown(f"## {team_name} **Stats** {season}")
 
-# If we have matches in session_state, render the team UI
-matches = st.session_state.get('team_matches') if 'team_matches' in st.session_state else None
-if matches is None:
-	# nothing to show until the user searches
-	matches = None
+# Dashboard
+with st.spinner("Loading team dashboard…"):
+    dash = get_team_basic_stats(team_id, season, refresh=refresh)
 
-if matches:
-	if not matches:
-		st.error("No matching team found.")
-	else:
-		if len(matches) > 1:
-			sel_options = [f"{t['full_name']} ({t.get('abbreviation','')})" for t in matches]
-			sel_name = st.selectbox("Multiple matches — pick a team", sel_options, key='team_select')
-			sel = next(t for t in matches if f"{t['full_name']} ({t.get('abbreviation','')})" == sel_name)
-		else:
-			sel = matches[0]
+if dash.empty:
+    st.error("Could not load team dashboard for that season.")
+    st.stop()
 
-		st.subheader(f"{sel['full_name']} — Roster")
+def _g(col, default=None):
+    # be resilient to naming differences
+    for c in (col, col.upper(), col.title(), col.replace("_"," ").title()):
+        if c in dash.columns: return dash[c].iloc[0]
+    return default
 
-	# season selector (persisted)
-	season = st.selectbox('Season', ['2023-24'], index=0, key='team_season')
+W = int(_g("W", 0) or 0); L = int(_g("L", 0) or 0); W_PCT = float(_g("W_PCT", 0.0) or 0.0)
+PTS = float(_g("PTS", 0.0) or 0.0); REB = float(_g("REB", 0.0) or 0.0); AST = float(_g("AST", 0.0) or 0.0)
+OFF_RTG = float(_g("OFF_RATING", 0.0) or 0.0); DEF_RTG = float(_g("DEF_RATING", 0.0) or 0.0); PACE = float(_g("PACE", 0.0) or 0.0)
 
-	# roster (cached if available)
-	roster = get_team_roster(sel['id'], season)
-	if roster.empty:
-		st.info('No roster found for this team/season.')
-	else:
-		# Show basic roster cols
-		display_roster = roster.copy()
-		# normalize column names that might be present in endpoint
-		# expected: ['PLAYER', 'PLAYER_ID', 'NUM', 'POSITION', 'HEIGHT', 'WEIGHT', 'FROM_YEAR', 'TO_YEAR']
-		# show subset
-		show_cols = [c for c in ['PLAYER', 'PLAYER_ID', 'NUM', 'POSITION'] if c in display_roster.columns]
-		display = display_roster[show_cols].copy()
+k1,k2,k3,k4 = st.columns(4)
+k1.metric("Record", f"{W}-{L}", f"{W_PCT*100:.1f}%")
+k2.metric("PTS/G", f"{PTS:.1f}")
+k3.metric("REB/G", f"{REB:.1f}")
+k4.metric("AST/G", f"{AST:.1f}")
 
-		# append per-game averages from cache by default
-		if 'PLAYER_ID' in display.columns:
-			stats_cols = ['PTS','REB','AST','FG%','3P%','FT%','G','MP']
-			for sc in stats_cols:
-				display.loc[:, sc] = ''
-			for i, row in display.iterrows():
-				try:
-					pid = int(row['PLAYER_ID'])
-				except Exception:
-					try:
-						pid = int(float(row['PLAYER_ID']))
-					except Exception:
-						pid = None
-				if pid is None:
-					continue
-				cached = get_cached_player_stats_for_season(pid, season)
-				if not cached.empty:
-					r = cached.iloc[0]
-					# convert totals to per-game averages if needed; here we assume totals already are per-game in cached CSV or are totals — we'll default to showing the numeric fields available
-					for sc in stats_cols:
-						if sc in r.index:
-							display.loc[i, sc] = r[sc]
+k5,k6,k7 = st.columns(3)
+k5.metric("Off Rating", f"{OFF_RTG:.1f}")
+k6.metric("Def Rating", f"{DEF_RTG:.1f}")
+k7.metric("Pace", f"{PACE:.1f}")
 
-		st.dataframe(display, width='stretch')
+st.markdown("### Team Leaders & Player Stats")
 
-		# manual refresh button to fetch per-player stats live (user-initiated)
-		if st.button('Fetch/refresh player stats for roster'):
-			total = len(display)
-			progress = st.progress(0)
-			status_place = st.empty()
-			with st.spinner('Fetching player stats (may take time)'):
-				for idx, (i, row) in enumerate(display.iterrows()):
-					try:
-						pid_raw = row.get('PLAYER_ID') if 'PLAYER_ID' in row.index else None
-						try:
-							pid = int(pid_raw)
-						except Exception:
-							# try converting from float or string
-							pid = int(float(pid_raw)) if pid_raw is not None else None
-						if pid is None:
-							status_place.write(f"Skipping row {i}: no PLAYER_ID")
-							continue
+# Player per-game stats
+with st.spinner("Loading player season stats…"):
+    pstats = get_team_players_season_stats(team_id, season, refresh=refresh)
 
-						df = get_player_stats_for_season(pid, season)
-						if df.empty:
-							# try reading cache after API attempt
-							df = get_cached_player_stats_for_season(pid, season)
+if pstats.empty:
+    roster = get_team_roster(team_id, season, refresh=refresh)
+    if not roster.empty:
+        st.caption("Season player averages unavailable; showing roster instead.")
+        st.dataframe(roster, use_container_width=True)
+    else:
+        st.info("No player data available for this season.")
+    st.stop()
 
-						if not df.empty:
-							r = df.iloc[0]
-							for sc in ['PTS','REB','AST','FG%','3P%','FT%','G','MP']:
-								if sc in r.index:
-									display.at[i, sc] = r[sc]
-							status_place.write(f"[{idx+1}/{total}] Fetched stats for {row.get('PLAYER', pid)} (id={pid})")
-						else:
-							status_place.write(f"[{idx+1}/{total}] No stats found for {row.get('PLAYER', pid)} (id={pid})")
-					except Exception as e:
-						status_place.write(f"[{idx+1}/{total}] Error for row {i}: {e}")
-					# small delay to reduce burst rate
-					time.sleep(0.5)
-					progress.progress((idx+1)/total)
-			st.success('Roster stats refresh complete (cached)')
-			st.dataframe(display, width='stretch')
+# Normalize column names
+rename = {
+    "PLAYER_NAME": "Name",
+    "GP": "GP", "MIN": "MIN", "PTS": "PTS", "REB": "REB", "AST": "AST",
+    "STL": "STL", "BLK": "BLK", "TOV": "TO", "PF": "PF",
+    "FG3_PCT": "3P%", "FT_PCT": "FT%",
+}
+for old, new in rename.items():
+    if old in pstats.columns and new not in pstats.columns:
+        pstats = pstats.rename(columns={old:new})
 
-		# Basic team-level aggregates (per-game averages across roster where available)
-		numeric = []
-		try:
-			numeric = display[[c for c in ['PTS','REB','AST','G','MP'] if c in display.columns]].apply(pd.to_numeric, errors='coerce')
-			team_pts = numeric['PTS'].mean() if 'PTS' in numeric.columns else None
-			cols = st.columns(3)
-			cols[0].metric('Team PTS (avg roster)', f"{team_pts:.1f}" if team_pts is not None else '—')
-		except Exception:
-			pass
+# Convert percent decimals to %
+for pct_col in ["3P%", "FT%"]:
+    if pct_col in pstats.columns:
+        pstats[pct_col] = (pstats[pct_col].astype(float) * 100).round(1)
 
-		# Simple Matplotlib plot for team PTS across seasons (placeholder requires aggregation across seasons)
-		st.markdown('### Team visualizations (season trend)')
-		# Build aggregated per-season averages across cached player season series
-		# Collect season -> list of player PTS for that season
-		season_map = {}
-		if 'PLAYER_ID' in display.columns:
-			for i, row in display.iterrows():
-				pid = int(row['PLAYER_ID'])
-				series = get_player_season_series(pid)
-				if series.empty:
-					continue
-				for _, r in series.iterrows():
-					s = str(r['Season'])
-					if 'PTS' in r.index:
-						season_map.setdefault(s, []).append(float(r['PTS']))
+# AST/TO
+if "AST" in pstats.columns and "TO" in pstats.columns:
+    pstats["AST/TO"] = pstats.apply(
+        lambda r: (float(r["AST"]) / float(r["TO"])) if float(r["TO"]) != 0 else None, axis=1
+    )
+    pstats["AST/TO"] = pstats["AST/TO"].round(2)
 
-		seasons_sorted = sorted(season_map.keys(), key=lambda s: int(s[:4]))
-		avg_pts = [ (sum(season_map[s]) / len(season_map[s])) if season_map.get(s) else None for s in seasons_sorted ]
+# Leaders (text only)
+def _leader(col):
+    if col not in pstats.columns: return None
+    row = pstats.sort_values(col, ascending=False).head(1)
+    return row.iloc[0]["Name"], float(row.iloc[0][col])
 
-		fig, ax = plt.subplots()
-		if seasons_sorted:
-			ax.bar(seasons_sorted, avg_pts, color='C1')
-			ax.set_ylabel('Avg PTS per player')
-			ax.set_title(f'{sel["full_name"]} - Avg PTS per player by season')
-			plt.xticks(rotation=45)
-		else:
-			ax.text(0.5, 0.5, 'No aggregate data', ha='center')
-		st.pyplot(fig)
+leaders = {"Points": _leader("PTS"), "Rebounds": _leader("REB"), "Assists": _leader("AST")}
+lc = st.columns(3)
+for (label, item), col in zip(leaders.items(), lc):
+    if item:
+        name, val = item
+        col.markdown(f"**{label}**")
+        col.subheader(f"{val:.1f}")
+        col.caption(name)
+    else:
+        col.write("—")
 
-		# Plotly interactive
-		with st.expander('Interactive team charts (Plotly)'):
-			try:
-				import plotly.express as px
-				dfp = pd.DataFrame({'Season': seasons_sorted, 'AvgPTS': avg_pts})
-				if not dfp.empty:
-					bar = px.bar(dfp, x='Season', y='AvgPTS', title=f"{sel['full_name']} - Avg PTS per player by season")
-					line = px.line(dfp, x='Season', y='AvgPTS', title=f"{sel['full_name']} - Avg PTS trend", markers=True)
-					st.plotly_chart(bar, width='stretch')
-					st.plotly_chart(line, width='stretch')
-			except Exception:
-				st.info('Interactive charts unavailable')
+# Display table (sorted by PTS)
+cols = ["Name","GP","MIN","PPG","RPG","APG","SPG","BPG","3P%","FT%","AST/TO"]
+show = [c for c in cols if c in pstats.columns]
+disp = pstats[show].sort_values("PTS", ascending=False).reset_index(drop=True)
+st.dataframe(disp, use_container_width=True, hide_index=True)
