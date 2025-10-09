@@ -14,6 +14,8 @@ from nba_api.stats.endpoints import (
         commonteamroster,
         teamdashboardbygeneralsplits,
         leaguedashplayerstats,
+        leaguedashteamstats,
+        teamyearbyyearstats,
 )
 
 CACHE_DIR = Path("data/cache")
@@ -111,8 +113,9 @@ def list_seasons_for_player(player_id, refresh=False):
 
 def player_career_pts_fg(player_id, refresh=False):
     df = _career_df(player_id, refresh=refresh)
-    if df.empty: return pd.DataFrame(columns=["Season","PTS","FG%"])
-    cols = [c for c in ["SEASON_ID","PTS","FG_PCT"] if c in df.columns]
+    if df.empty: return pd.DataFrame(columns=["Season","PTS","FG%","GP"])
+    # include GP if available so callers can compute per-game values
+    cols = [c for c in ["SEASON_ID","PTS","FG_PCT","GP"] if c in df.columns]
     df = df[cols].rename(columns={"SEASON_ID":"Season","FG_PCT":"FG%"})
     if "FG%" in df.columns:
         df["FG%"] = (df["FG%"].astype(float) * 100).round(1)
@@ -165,26 +168,254 @@ def team_players_for_dropdown(team_id, season, refresh=False):
     return out
 
 def get_team_basic_stats(team_id, season, refresh=False):
-    #_require_nba()
     cp = _p(f"team_basic_{team_id}_{season}.csv")
     if cp.exists() and not refresh:
-        try: return _load_csv(cp)
-        except Exception: pass
+        try:
+            return _load_csv(cp)
+        except Exception:
+            pass
+
     try:
         dash = teamdashboardbygeneralsplits.TeamDashboardByGeneralSplits(
-            team_id=team_id, season=season, timeout=30
+            team_id=team_id,
+            season=season,
+            season_type_all_star="Regular Season",     # ensure REGULAR SEASON
+            per_mode_detailed="PerGame",               # per-game not required, but fine
+            timeout=30
         ).get_normalized_dict()
-        frames = []
-        for k, v in dash.items():
-            if isinstance(v, list):
-                try: frames.append(pd.DataFrame(v))
-                except Exception: pass
-        df = frames[0] if frames else pd.DataFrame()
+
+        # Prefer the 'OverallTeamDashboard' key explicitly
+        df = pd.DataFrame()
+        if isinstance(dash, dict):
+            if "OverallTeamDashboard" in dash and isinstance(dash["OverallTeamDashboard"], list):
+                df = pd.DataFrame(dash["OverallTeamDashboard"])
+
+        # Fallback (rare): search by name containing "Overall"
+        if df.empty:
+            for k, v in dash.items():
+                if "overall" in str(k).lower() and isinstance(v, list):
+                    try:
+                        cand = pd.DataFrame(v)
+                        if not cand.empty:
+                            df = cand
+                            break
+                    except Exception:
+                        pass
+
+        # Final fallback: first list-like
+        if df.empty:
+            for v in dash.values():
+                if isinstance(v, list):
+                    try:
+                        cand = pd.DataFrame(v)
+                        if not cand.empty:
+                            df = cand
+                            break
+                    except Exception:
+                        pass
+
         if not df.empty:
             _save_csv(cp, df)
         return df
+
     except Exception:
         return pd.DataFrame()
+    
+def get_team_adv_summary(team_id, season, refresh=False):
+    """
+    Season-to-date REGULAR SEASON summary for one team.
+    Returns a 1-row DataFrame with W, L, W_PCT, OFF_RATING, DEF_RATING, NET_RATING (and more).
+    """
+    cp = _p(f"team_adv_{team_id}_{season}.csv")
+    if cp.exists() and not refresh:
+        try:
+            return _load_csv(cp)
+        except Exception:
+            pass
+
+    try:
+        df_all = leaguedashteamstats.LeagueDashTeamStats(
+            season=season,
+            season_type_all_star="Regular Season",
+            measure_type_detailed_defense="Advanced",  # <-- gives Off/Def/Net Rating
+            per_mode_detailed="PerGame",               # OK for counts; ratings are unaffected
+            timeout=35
+        ).get_data_frames()[0]
+
+        # Filter for just this team
+        row = df_all[df_all["TEAM_ID"] == team_id].copy()
+        if row.empty:
+            # Very rare: fall back to name match
+            # (Use your static teams list to find the official name/abbrev if desired)
+            return pd.DataFrame()
+
+        # Cache the single-row frame
+        _save_csv(cp, row)
+        return row.reset_index(drop=True)
+
+    except Exception:
+        return pd.DataFrame()
+
+def _season_key_to_start_year(season_str):
+    # "2018-19" -> 2018
+    return int(str(season_str)[:4])
+
+def get_team_record_from_yearbyyear(team_id, season, refresh=False):
+    """
+    Reliable historical record. Returns DataFrame with columns:
+    ['SEASON_ID','W','L','W_PCT'] for the requested season.
+    """
+    year = _season_key_to_start_year(season)
+    cp = _p(f"team_yby_{team_id}.csv")
+    if cp.exists() and not refresh:
+        try:
+            df_all = _load_csv(cp)
+        except Exception:
+            df_all = None
+    else:
+        df_all = None
+
+    if df_all is None:
+        try:
+            df_all = teamyearbyyearstats.TeamYearByYearStats(team_id=team_id, timeout=35).get_data_frames()[0]
+            _save_csv(cp, df_all)
+        except Exception:
+            return pd.DataFrame()
+
+    # Normalize season label to start year for matching
+    # TeamYearByYearStats typically has 'YEAR' like '2018-19' or numeric start year; capture both
+    if "YEAR" in df_all.columns:
+        # Keep both YEAR (e.g., '2018-19') and a derived YEAR_START (2018)
+        tmp = df_all.copy()
+        # Some seasons are like '2018-19', some are '2018'; handle robustly
+        def _start(x):
+            s = str(x)
+            try:
+                return int(s[:4])
+            except Exception:
+                return None
+        tmp["YEAR_START"] = tmp["YEAR"].apply(_start)
+    else:
+        # older schema fallback
+        tmp = df_all.copy()
+        tmp["YEAR_START"] = tmp["SEASON_ID"].apply(lambda x: int(str(x)[:4])) if "SEASON_ID" in tmp.columns else None
+
+    row = tmp[tmp["YEAR_START"] == year]
+    if row.empty:
+        return pd.DataFrame()
+
+    # standardize columns
+    out = pd.DataFrame([{
+        "SEASON_ID": season,
+        "W": int(row.iloc[0]["WINS"] if "WINS" in row.columns else row.iloc[0].get("W", 0)),
+        "L": int(row.iloc[0]["LOSSES"] if "LOSSES" in row.columns else row.iloc[0].get("L", 0)),
+        "W_PCT": float(row.iloc[0]["WIN_PCT"] if "WIN_PCT" in row.columns else row.iloc[0].get("W_PCT", 0.0)),
+    }])
+    return out
+
+
+def get_team_ratings_from_advanced(team_id, season, refresh=False):
+    """
+    Season aggregate advanced ratings. Returns 1-row DF with:
+    ['OFF_RATING','DEF_RATING','NET_RATING'] (or E_* variants).
+    """
+    cp = _p(f"team_adv_{team_id}_{season}.csv")
+    if cp.exists() and not refresh:
+        try:
+            return _load_csv(cp)
+        except Exception:
+            pass
+    try:
+        df_all = leaguedashteamstats.LeagueDashTeamStats(
+            season=season,
+            season_type_all_star="Regular Season",
+            measure_type_detailed_defense="Advanced",
+            per_mode_detailed="PerGame",
+            timeout=35
+        ).get_data_frames()[0]
+
+        row = df_all[df_all["TEAM_ID"] == team_id].copy()
+        if row.empty:
+            return pd.DataFrame()
+
+        _save_csv(cp, row)
+        return row.reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
+
+def get_team_record_and_ratings(team_id, season, refresh=False):
+    """
+    Single source of truth for Team page KPIs.
+    Merges:
+      - Record from TeamYearByYearStats (reliable historically)
+      - Off/Def/Net from LeagueDashTeamStats Advanced
+    Returns 1-row DF with W, L, W_PCT, OFF_RATING, DEF_RATING, NET_RATING.
+    """
+    rec = get_team_record_from_yearbyyear(team_id, season, refresh=refresh)
+    adv = get_team_ratings_from_advanced(team_id, season, refresh=refresh)
+
+    # Prepare ratings with alias handling
+    OFF = DEF = NET = None
+    if not adv.empty:
+        def _g(df, *names):
+            for n in names:
+                if n in df.columns:
+                    return float(df[n].iloc[0])
+            return None
+        OFF = _g(adv, "OFF_RATING", "E_OFF_RATING")
+        DEF = _g(adv, "DEF_RATING", "E_DEF_RATING")
+        NET = _g(adv, "NET_RATING", "E_NET_RATING")
+        if NET is None and OFF is not None and DEF is not None:
+            NET = OFF - DEF
+
+    # If record missing, return just ratings (or empty)
+    if rec.empty:
+        if OFF is None and DEF is None and NET is None:
+            return pd.DataFrame()
+        return pd.DataFrame([{
+            "SEASON_ID": season, "W": None, "L": None, "W_PCT": None,
+            "OFF_RATING": OFF or 0.0, "DEF_RATING": DEF or 0.0, "NET_RATING": NET or 0.0
+        }])
+
+    # Merge into one row
+    out = rec.copy()
+    out["OFF_RATING"] = OFF or 0.0
+    out["DEF_RATING"] = DEF or 0.0
+    out["NET_RATING"] = NET or (OFF - DEF if (OFF is not None and DEF is not None) else 0.0)
+    return out.reset_index(drop=True)
+
+    # #_require_nba()
+    # cp = _p(f"team_basic_{team_id}_{season}.csv")
+    # if cp.exists() and not refresh:
+    #     try: return _load_csv(cp)
+    #     except Exception: pass
+    # try:
+    #     dash = teamdashboardbygeneralsplits.TeamDashboardByGeneralSplits(
+    #         team_id=team_id, season=season, timeout=30
+    #     ).get_normalized_dict()
+    #     frames = []
+    #     for k, v in dash.items():
+    #         if isinstance(v, list):
+    #             try:
+    #                 frames.append(pd.DataFrame(v))
+    #             except Exception:
+    #                 pass
+
+    #     # Prefer the frame that contains season-level W/L (overall team totals)
+    #     df = pd.DataFrame()
+    #     for f in frames:
+    #         if not f.empty and ("W" in f.columns or "W_PCT" in f.columns) and ("L" in f.columns):
+    #             df = f
+    #             break
+    #     # fallback to first frame if we couldn't find the season-level one
+    #     if df.empty and frames:
+    #         df = frames[0]
+    #     if not df.empty:
+    #         _save_csv(cp, df)
+    #     return df
+    # except Exception:
+    #     return pd.DataFrame()
 
 def get_team_players_season_stats(team_id, season, refresh=False):
     #_require_nba()

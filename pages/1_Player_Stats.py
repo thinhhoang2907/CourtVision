@@ -68,13 +68,54 @@ with st.spinner("Loading season totals…"):
 if totals.empty:
     st.info("No season totals available.")
 else:
-    st.dataframe(totals, use_container_width=True, hide_index=True)
+    # Convert season totals to per-game (PPG/RPG/APG/SPG/BPG) for display
     row = totals.iloc[0]
-    k1,k2,k3,k4 = st.columns(4)
-    k1.metric("PTS", str(row.get("PTS","—")))
-    k2.metric("REB", str(row.get("REB","—")))
-    k3.metric("AST", str(row.get("AST","—")))
-    k4.metric("FG%", str(row.get("FG%","—")))
+    # Determine games played column
+    gp_val = None
+    for col in ("GP", "G"):
+        if col in row.index:
+            try:
+                gp_val = float(row[col])
+            except Exception:
+                gp_val = None
+            break
+
+    def per_game(stat_name):
+        if gp_val and gp_val > 0 and stat_name in row.index:
+            try:
+                return round(float(row[stat_name]) / gp_val, 1)
+            except Exception:
+                return "—"
+        return "—"
+
+    ppg = per_game("PTS")
+    rpg = per_game("REB")
+    apg = per_game("AST")
+    spg = per_game("STL")
+    bpg = per_game("BLK")
+
+    # Show a compact per-game summary table instead of raw season totals
+    display_row = {
+        "Season": row.get("Season", ""),
+        "Team": row.get("Team", ""),
+        "GP": int(gp_val) if gp_val is not None else "—",
+        "MP": row.get("MP", "—"),
+        "PPG": ppg,
+        "RPG": rpg,
+        "APG": apg,
+        "SPG": spg,
+        "BPG": bpg,
+        "FG%": row.get("FG%", "—"),
+    }
+    st.dataframe(pd.DataFrame([display_row]), use_container_width=True, hide_index=True)
+
+    k1,k2,k3,k4,k5 = st.columns(5)
+    k1.metric("PPG", str(ppg))
+    k2.metric("RPG", str(rpg))
+    k3.metric("APG", str(apg))
+    k4.metric("SPG", str(spg))
+    k5.metric("BPG", str(bpg))
+    
 
 # Charts
 st.markdown("### Career Trends")
@@ -83,15 +124,42 @@ if series.empty or "Season" not in series.columns:
     st.info("Not enough data to chart.")
 else:
     s = series.sort_values("Season")
-    fig1 = plt.figure()
-    plt.bar(s["Season"], s["PTS"])
-    plt.xticks(rotation=45, ha="right"); plt.ylabel("Points Per Game"); plt.title("PTS by Season")
-    st.pyplot(fig1, clear_figure=True)
+    # Compute PPG safely using GP if present
+    def compute_ppg(row):
+        gp = None
+        for col in ("GP", "G"):
+            if col in row.index:
+                try:
+                    gp = float(row[col])
+                except Exception:
+                    gp = None
+                break
+        try:
+            if gp and gp > 0:
+                return float(row.get("PTS", 0)) / gp
+            # fall back to totals if GP not available
+            return float(row.get("PTS", 0))
+        except Exception:
+            return None
 
-    fig2 = plt.figure()
-    plt.plot(s["Season"], s["FG%"], marker="o")
-    plt.xticks(rotation=45, ha="right"); plt.ylabel("Field Goal %"); plt.title("FG% by Season")
-    st.pyplot(fig2, clear_figure=True)
+    s = s.copy()
+    s["PPG"] = s.apply(compute_ppg, axis=1)
+
+    # Create two side-by-side charts: PPG and FG%
+    c1, c2 = st.columns(2)
+
+    with c1:
+        fig1 = plt.figure(figsize=(6, 3))
+        plt.bar(s["Season"], s["PPG"].round(1))
+        plt.xticks(rotation=45, ha="right"); plt.ylabel("PPG"); plt.title("Points Per Game by Season")
+        st.pyplot(fig1, clear_figure=True)
+
+    with c2:
+        fig2 = plt.figure(figsize=(6, 3))
+        plt.plot(s["Season"], s["FG%"], marker="o")
+        plt.xticks(rotation=45, ha="right"); plt.ylabel("Field Goal %"); plt.title("FG% by Season")
+        st.pyplot(fig2, clear_figure=True)
+
 
 # # search UI
 # name = st.text_input("Search player by name")

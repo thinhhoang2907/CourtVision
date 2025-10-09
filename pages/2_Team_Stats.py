@@ -4,7 +4,8 @@ import pandas as pd
 
 from courtvision.data.nba_client import (
     list_all_teams, recent_seasons,
-    get_team_basic_stats, get_team_roster, get_team_players_season_stats,
+    get_team_basic_stats, get_team_roster, get_team_players_season_stats, get_team_adv_summary, 
+    get_team_record_and_ratings,
 )
 
 st.title("Team Stats")
@@ -24,32 +25,57 @@ st.markdown(f"## {team_name} **Stats** {season}")
 
 # Dashboard
 with st.spinner("Loading team dashboard…"):
-    dash = get_team_basic_stats(team_id, season, refresh=refresh)
+    #dash = get_team_basic_stats(team_id, season, refresh=refresh)
+    #dash = get_team_adv_summary(team_id, season, refresh=refresh)
+    dash = get_team_record_and_ratings(team_id, season, refresh=refresh)
 
 if dash.empty:
     st.error("Could not load team dashboard for that season.")
     st.stop()
 
-def _g(col, default=None):
-    # be resilient to naming differences
-    for c in (col, col.upper(), col.title(), col.replace("_"," ").title()):
-        if c in dash.columns: return dash[c].iloc[0]
-    return default
+W     = int(dash.get("W", pd.Series([0])).iloc[0] or 0)
+L     = int(dash.get("L", pd.Series([0])).iloc[0] or 0)
+W_PCT = float(dash.get("W_PCT", pd.Series([0.0])).iloc[0] or 0.0)
 
-W = int(_g("W", 0) or 0); L = int(_g("L", 0) or 0); W_PCT = float(_g("W_PCT", 0.0) or 0.0)
-PTS = float(_g("PTS", 0.0) or 0.0); REB = float(_g("REB", 0.0) or 0.0); AST = float(_g("AST", 0.0) or 0.0)
-OFF_RTG = float(_g("OFF_RATING", 0.0) or 0.0); DEF_RTG = float(_g("DEF_RATING", 0.0) or 0.0); PACE = float(_g("PACE", 0.0) or 0.0)
+OFF_RTG = float(dash.get("OFF_RATING", pd.Series([0.0])).iloc[0] or 0.0)
+DEF_RTG = float(dash.get("DEF_RATING", pd.Series([0.0])).iloc[0] or 0.0)
+NET_RTG = float(dash.get("NET_RATING", pd.Series([OFF_RTG - DEF_RTG])).iloc[0] or (OFF_RTG - DEF_RTG))
 
-k1,k2,k3,k4 = st.columns(4)
+k1, k2, k3, k4 = st.columns(4)
 k1.metric("Record", f"{W}-{L}", f"{W_PCT*100:.1f}%")
-k2.metric("PTS/G", f"{PTS:.1f}")
-k3.metric("REB/G", f"{REB:.1f}")
-k4.metric("AST/G", f"{AST:.1f}")
+k2.metric("Off Rating", f"{OFF_RTG:.1f}")
+k3.metric("Def Rating", f"{DEF_RTG:.1f}")
+k4.metric("Net Rating", f"{NET_RTG:.1f}")
 
-k5,k6,k7 = st.columns(3)
-k5.metric("Off Rating", f"{OFF_RTG:.1f}")
-k6.metric("Def Rating", f"{DEF_RTG:.1f}")
-k7.metric("Pace", f"{PACE:.1f}")
+# if dash.empty:
+#     st.error("Could not load team dashboard for that season.")
+#     st.stop()
+
+# def _g(col, *alts, default=None):
+#     # handle both OFF_RATING / E_OFF_RATING and similar variants
+#     for name in (col,) + alts:
+#         if name in dash.columns:
+#             return dash[name].iloc[0]
+#     return default
+
+# W       = int(_g("W", default=0) or 0)
+# L       = int(_g("L", default=0) or 0)
+# W_PCT   = float(_g("W_PCT", default=0.0) or 0.0)
+
+# # Ratings appear as OFF_RATING / DEF_RATING / NET_RATING (and sometimes E_* variants)
+# OFF_RTG = float(_g("OFF_RATING", "E_OFF_RATING", default=0.0) or 0.0)
+# DEF_RTG = float(_g("DEF_RATING", "E_DEF_RATING", default=0.0) or 0.0)
+# NET_RTG = _g("NET_RATING", "E_NET_RATING", default=None)
+# if NET_RTG is None:
+#     NET_RTG = OFF_RTG - DEF_RTG
+# NET_RTG = float(NET_RTG)
+
+# # KPIs: Record + advanced ratings only
+# k1, k2, k3, k4 = st.columns(4)
+# k1.metric("Record", f"{W}-{L}", f"{W_PCT*100:.1f}%")
+# k2.metric("Off Rating", f"{OFF_RTG:.1f}")
+# k3.metric("Def Rating", f"{DEF_RTG:.1f}")
+# k4.metric("Net Rating", f"{NET_RTG:.1f}")
 
 st.markdown("### Team Leaders & Player Stats")
 
@@ -107,7 +133,7 @@ for (label, item), col in zip(leaders.items(), lc):
         col.write("—")
 
 # Display table (sorted by PTS)
-cols = ["Name","GP","MIN","PPG","RPG","APG","SPG","BPG","3P%","FT%","AST/TO"]
+cols = ["Name","GP","MIN","PTS","REB","AST","STL","BLK","3P%","FT%","AST/TO"]
 show = [c for c in cols if c in pstats.columns]
 disp = pstats[show].sort_values("PTS", ascending=False).reset_index(drop=True)
 st.dataframe(disp, use_container_width=True, hide_index=True)
