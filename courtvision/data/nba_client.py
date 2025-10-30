@@ -507,40 +507,180 @@ def compute_true_shooting_pct(player_row):
     if denom <= 0: return None
     return 100.0 * (PTS / denom)
 
-def compute_per_approx(player_row):
+def compute_player_PER(player_row, team_row, season, refresh=False):
     """
-    Approximate 'uPER-like' score using box-score components (not league-normalized PER).
-    We label it clearly as 'PER (approx)' to satisfy the checkpoint while being transparent.
-    Based on a game-score style composite per 36 min to scale for playing time.
+    Hollinger PER based on Basketball-Reference formula:
+      1) Compute uPER with team & league constants,
+      2) Adjust for pace (lgPace / tmPace),
+      3) Normalize to PER (league avg = 15) using league-average uPER (minutes-weighted).
+    Returns PER (float) or None.
     """
-    if player_row.empty: return None
+    if player_row.empty or team_row.empty:
+        return None
+
+    consts = _league_constants(season, refresh=refresh)
+    if consts is None:
+        return None
+
+    # Team ratios needed in uPER (tmAST/tmFG)
+    tmFG  = float(team_row.get("FGM", team_row.get("FG", 0)).iloc[0] if "FGM" in team_row.columns or "FG" in team_row.columns else 0.0)
+    tmAST = float(team_row.get("AST", pd.Series([0])).iloc[0] or 0.0)
+
+    # Pull player totals
     pr = player_row.iloc[0]
+    def g(name, alt=None):
+        for k in [name, alt] if alt else [name]:
+            if k in player_row.columns:
+                try: return float(pr[k] or 0.0)
+                except Exception: return 0.0
+        return 0.0
 
-    # Totals
-    PTS = float(pr.get("PTS", 0) or 0)
-    FGM = float(pr.get("FGM", 0) or 0)
-    FGA = float(pr.get("FGA", 0) or 0)
-    FTM = float(pr.get("FTM", 0) or 0)
-    FTA = float(pr.get("FTA", 0) or 0)
-    ORB = float(pr.get("OREB", pr.get("OREB_TOT", 0)) or 0)
-    DRB = float(pr.get("DREB", pr.get("DREB_TOT", 0)) or 0)
-    AST = float(pr.get("AST", 0) or 0)
-    STL = float(pr.get("STL", 0) or 0)
-    BLK = float(pr.get("BLK", 0) or 0)
-    PF  = float(pr.get("PF", 0) or 0)
-    TOV = float(pr.get("TOV", 0) or 0)
-    MIN = float(pr.get("MIN", 0) or 0)
+    MIN = g("MIN")
+    if MIN <= 0: return None
 
-    # Game Score (Hollinger) style composite
-    game_score = (PTS + 0.4*FGM - 0.7*FGA - 0.4*(FTA-FTM) + 0.7*ORB + 0.3*DRB
-                  + STL + 0.7*AST + 0.7*BLK - 0.4*PF - TOV)
+    FG   = g("FGM","FG")
+    FGA  = g("FGA")
+    _3P  = g("FG3M","3PM")
+    FT   = g("FTM","FT")
+    FTA  = g("FTA")
+    AST  = g("AST")
+    ORB  = g("OREB","OREB_TOT")
+    TRB  = g("REB","TRB")
+    STL  = g("STL")
+    BLK  = g("BLK")
+    TOV  = g("TOV","TO")
+    PF   = g("PF")
+    PTS  = g("PTS")
 
-    # Scale to 36 minutes to compare across roles
-    if MIN > 0:
-        per36 = game_score * (36.0 / (MIN / max(1.0, float(pr.get("GP", 1)))))
-    else:
-        per36 = game_score
-    return per36
+    factor = consts["factor"]; VOP = consts["VOP"]; DRBP = consts["DRBP"]
+    lgFT = consts["lgFT"]; lgFTA = consts["lgFTA"]; lgFG = consts["lgFG"]; lgAST = consts["lgAST"]; lgPF = consts["lgPF"]
+
+    # uPER (BBR/Hollinger form, per minute)
+    # See: Wikipedia "Calculation" section reproducing BBR formula. :contentReference[oaicite:2]{index=2}
+    try:
+        tmAST_over_tmFG = (tmAST / max(tmFG, 1e-9)) if tmFG else 0.0
+        uPER_num = (
+            _3P
+            + (2.0/3.0) * AST
+            + FG * (2.0 - factor * tmAST_over_tmFG)
+            + 0.5 * FT * (2.0 - (1.0/3.0) * tmAST_over_tmFG)
+            - VOP * TOV
+            - VOP * DRBP * (FGA - FG)
+            - VOP * 0.44 * (0.44 + 0.56 * DRBP) * (FTA - FT)
+            + VOP * (1 - DRBP) * (TRB - ORB)
+            + VOP * DRBP * ORB
+            + VOP * STL
+            + VOP * DRBP * BLK
+            - PF * ((lgFT / max(lgPF,1e-9)) - 0.44 * (consts["lgFTA"]/max(lgPF,1e-9)) * VOP)
+        )
+        uPER = (1.0 / MIN) * uPER_num
+    except Exception:
+        return None
+
+    # Pace adjust: PER' = uPER * (lgPace / tmPace)
+    tm_id = int(team_row.get("TEAM_ID", pd.Series([None])).iloc[0] or 0)
+    tmPace = team_pace(tm_id, season, refresh=refresh)
+    lgPace = league_pace(season, refresh=refresh)
+    if not tmPace or not lgPace:
+        return None
+    per_pace = uPER * (lgPace / tmPace)
+
+    # League-average uPER (minutes-weighted) for normalization
+    lguPER = league_average_uPER(season, refresh=refresh)
+    if not lguPER:
+        return None
+
+    PER = per_pace * (15.0 / lguPER)
+    return float(PER)
+
+def league_average_uPER(season, refresh=False):
+    """
+    Compute league-average uPER as a minutes-weighted mean of player uPER for the season.
+    Uses team-level ratios for tmAST/tmFG mapped to each player’s team.
+    Cached to avoid recomputation.
+    """
+    cp = _p(f"league_avg_uPER_{season}.json")
+    if cp.exists() and not refresh:
+        try:
+            return float(_load_json(cp)["lguPER"])
+        except Exception:
+            pass
+
+    # Pull player totals league-wide
+    try:
+        p = leaguedashplayerstats.LeagueDashPlayerStats(
+            season=season,
+            season_type_all_star="Regular Season",
+            per_mode_detailed="Totals",
+            timeout=45
+        ).get_data_frames()[0]
+    except Exception:
+        return None
+    if p.empty: return None
+
+    # Build team totals map (for tmAST/tmFG per team)
+    team_totals = leaguedashteamstats.LeagueDashTeamStats(
+        season=season, season_type_all_star="Regular Season",
+        measure_type_detailed_defense="Base", per_mode_detailed="Totals",
+        timeout=35
+    ).get_data_frames()[0]
+    team_map = {int(r["TEAM_ID"]): r for _, r in team_totals.iterrows()}
+
+    consts = _league_constants(season, refresh=refresh)
+    if consts is None: return None
+    factor = consts["factor"]; VOP = consts["VOP"]; DRBP = consts["DRBP"]
+    lgFT = consts["lgFT"]; lgFTA = consts["lgFTA"]; lgFG = consts["lgFG"]; lgAST = consts["lgAST"]; lgPF = consts["lgPF"]
+
+    # Compute uPER per player (minutes > 0)
+    def uper_row(r):
+        MIN = float(r.get("MIN", 0) or 0)
+        if MIN <= 0: return 0.0, 0.0
+        TEAM_ID = int(r.get("TEAM_ID", 0) or 0)
+        t = team_map.get(TEAM_ID, {})
+        tmFG  = float(t.get("FGM", t.get("FG", 0)) or 0.0)
+        tmAST = float(t.get("AST", 0) or 0.0)
+        tmAST_over_tmFG = (tmAST / tmFG) if tmFG else 0.0
+
+        FG   = float(r.get("FGM", r.get("FG", 0)) or 0.0)
+        FGA  = float(r.get("FGA", 0) or 0.0)
+        _3P  = float(r.get("FG3M", 0) or 0.0)
+        FT   = float(r.get("FTM", 0) or 0.0)
+        FTA  = float(r.get("FTA", 0) or 0.0)
+        AST  = float(r.get("AST", 0) or 0.0)
+        ORB  = float(r.get("OREB", 0) or 0.0)
+        TRB  = float(r.get("REB", 0) or 0.0)
+        STL  = float(r.get("STL", 0) or 0.0)
+        BLK  = float(r.get("BLK", 0) or 0.0)
+        TOV  = float(r.get("TOV", r.get("TO", 0)) or 0.0)
+        PF   = float(r.get("PF", 0) or 0.0)
+
+        uPER_num = (
+            _3P + (2.0/3.0)*AST
+            + FG * (2.0 - factor * tmAST_over_tmFG)
+            + 0.5 * FT * (2.0 - (1.0/3.0) * tmAST_over_tmFG)
+            - VOP*TOV
+            - VOP*DRBP*(FGA - FG)
+            - VOP*0.44*(0.44 + 0.56*DRBP)*(FTA - FT)
+            + VOP*(1-DRBP)*(TRB - ORB)
+            + VOP*DRBP*ORB
+            + VOP*STL
+            + VOP*DRBP*BLK
+            - PF * ((lgFT/max(lgPF,1e-9)) - 0.44*(lgFTA/max(lgPF,1e-9))*VOP)
+        )
+        return (uPER_num / MIN), MIN
+
+    # minutes-weighted average
+    total_uPER_x_min = 0.0
+    total_min = 0.0
+    for _, r in p.iterrows():
+        u, m = uper_row(r)
+        total_uPER_x_min += u * m
+        total_min += m
+    lguPER = (total_uPER_x_min / total_min) if total_min > 0 else None
+    if lguPER:
+        _save_json(cp, {"lguPER": lguPER})
+    return lguPER
+
 
 def get_team_head_to_head(team_id_a, team_id_b, season, refresh=False):
     """
@@ -689,6 +829,114 @@ def get_team_h2h_games(team_id_a, team_id_b, season, refresh=False, season_type=
     summary = {"A_wins": a_wins, "B_wins": b_wins, "games": len(m)}
     games_df = m[["GAME_DATE", "GAME_ID", "PTS_A", "PTS_B", "MATCHUP_A"]].copy()
     return summary, games_df
+
+# Calculating the PER
+
+def _league_team_totals(season, refresh=False):
+    """
+    League totals by summing team totals (Regular Season).
+    Returns one-row DataFrame with FG, FGA, 3PM, FT, FTA, AST, ORB, DRB, REB, TOV, PF, PTS, GP.
+    """
+    cp = _p(f"league_team_totals_{season}.csv")
+    if cp.exists() and not refresh:
+        try: return _load_csv(cp)
+        except Exception: pass
+    try:
+        df = leaguedashteamstats.LeagueDashTeamStats(
+            season=season,
+            season_type_all_star="Regular Season",
+            measure_type_detailed_defense="Base",
+            per_mode_detailed="Totals",
+            timeout=35
+        ).get_data_frames()[0]
+        # Sum across all teams
+        cols = ["FGM","FGA","FG3M","FTM","FTA","AST","OREB","DREB","REB","TOV","PF","PTS","GP"]
+        agg = df[cols].sum(numeric_only=True).to_frame().T
+        _save_csv(cp, agg)
+        return agg
+    except Exception:
+        return pd.DataFrame()
+
+def _league_advanced(season, refresh=False):
+    """
+    League advanced -> use team 'Advanced' to compute league pace (minutes-weighted).
+    """
+    cp = _p(f"league_team_adv_{season}.csv")
+    if cp.exists() and not refresh:
+        try: return _load_csv(cp)
+        except Exception: pass
+    try:
+        adv = leaguedashteamstats.LeagueDashTeamStats(
+            season=season,
+            season_type_all_star="Regular Season",
+            measure_type_detailed_defense="Advanced",
+            per_mode_detailed="PerGame",
+            timeout=35
+        ).get_data_frames()[0]
+        _save_csv(cp, adv)
+        return adv
+    except Exception:
+        return pd.DataFrame()
+
+def _team_advanced_row(team_id, season, refresh=False):
+    adv = _league_advanced(season, refresh=refresh)
+    if adv.empty: return pd.Series(dtype=float)
+    row = adv[adv["TEAM_ID"] == team_id]
+    return row.iloc[0] if not row.empty else pd.Series(dtype=float)
+
+def league_pace(season, refresh=False):
+    """
+    Weighted league pace using team PACE weighted by GP.
+    """
+    adv = _league_advanced(season, refresh=refresh)
+    if adv.empty: return None
+    # weight by games played (GP) if present; else simple mean
+    if "GP" in adv.columns and "PACE" in adv.columns:
+        num = (adv["PACE"].astype(float) * adv["GP"].astype(float)).sum()
+        den = adv["GP"].astype(float).sum()
+        return float(num/den) if den else None
+    return float(adv["PACE"].astype(float).mean()) if "PACE" in adv.columns else None
+
+def team_pace(team_id, season, refresh=False):
+    row = _team_advanced_row(team_id, season, refresh=refresh)
+    try:
+        return float(row["PACE"])
+    except Exception:
+        return None
+
+def _league_constants(season, refresh=False):
+    """
+    Compute factor, VOP, DRBP from league totals (Hollinger/BBR).
+    Returns dict { 'factor', 'VOP', 'DRBP', 'lgFT','lgFTA','lgFG','lgAST','lgTRB','lgORB','lgPTS','lgPF' }
+    """
+    lg = _league_team_totals(season, refresh=refresh)
+    if lg.empty: return None
+    lgFT  = float(lg["FTM"].iloc[0])
+    lgFTA = float(lg["FTA"].iloc[0])
+    lgFG  = float(lg["FGM"].iloc[0])
+    lgAST = float(lg["AST"].iloc[0])
+    lgTRB = float(lg["REB"].iloc[0])
+    lgORB = float(lg["OREB"].iloc[0])
+    lgPF  = float(lg["PF"].iloc[0])
+    lgPTS = float(lg["PTS"].iloc[0])
+    lgFGA = float(lg["FGA"].iloc[0])
+    # Hollinger constants
+    # factor = 2/3 - [0.5 * (lgAST/lgFG)] / [2 * (lgFG/lgFT)]
+    try:
+        factor = (2.0/3.0) - (0.5 * (lgAST/lgFG)) / (2.0 * (lgFG/max(lgFT,1e-9)))
+    except Exception:
+        factor = 2.0/3.0
+    # VOP = lgPTS / (lgFGA - lgORB + lgTOV + 0.44*lgFTA)
+    # Need lgTOV — not directly in team totals pre-1978, but we have it (TOV)
+    lgTOV = float(lg["TOV"].iloc[0])
+    VOP = lgPTS / max((lgFGA - lgORB + lgTOV + 0.44*lgFTA), 1e-9)
+    # DRBP = (lgTRB - lgORB) / lgTRB
+    DRBP = (lgTRB - lgORB) / max(lgTRB, 1e-9)
+    return {
+        "factor": factor, "VOP": VOP, "DRBP": DRBP,
+        "lgFT": lgFT, "lgFTA": lgFTA, "lgFG": lgFG, "lgAST": lgAST,
+        "lgTRB": lgTRB, "lgORB": lgORB, "lgPTS": lgPTS, "lgPF": lgPF
+    }
 
 
 # BASE_DIR = Path(__file__).resolve().parents[2]  # repo root

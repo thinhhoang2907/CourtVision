@@ -6,8 +6,8 @@ import matplotlib.pyplot as plt
 from courtvision.data.nba_client import (
     list_all_teams, recent_seasons, search_players, team_players_for_dropdown,
     list_seasons_for_player, get_player_season_row, get_team_season_base_totals,
-    compute_usage_rate, compute_true_shooting_pct, compute_per_approx,
-    get_team_record_and_ratings, get_team_h2h_games,
+    compute_usage_rate, compute_true_shooting_pct,
+    get_team_record_and_ratings, get_team_h2h_games, compute_player_PER
 )
 
 st.title("Comparisons")
@@ -127,9 +127,19 @@ if mode == "Players":
     usg_a = compute_usage_rate(row_a, team_tot_a)
     usg_b = compute_usage_rate(row_b, team_tot_b)
 
-    # TS% & PER approx
-    ts_a = compute_true_shooting_pct(row_a); ts_b = compute_true_shooting_pct(row_b)
-    per_a = compute_per_approx(row_a);       per_b = compute_per_approx(row_b)
+    # --- Advanced metrics (TS% & PER) ---
+    ts_a = compute_true_shooting_pct(row_a)
+    ts_b = compute_true_shooting_pct(row_b)
+
+    # For PER we need team totals (for same season actually used)
+    tid_a = team_id_from_row(row_a)
+    tid_b = team_id_from_row(row_b)
+    team_tot_a = get_team_season_base_totals(tid_a, season_a, refresh=refresh) if tid_a else pd.DataFrame()
+    team_tot_b = get_team_season_base_totals(tid_b, season_b, refresh=refresh) if tid_b else pd.DataFrame()
+
+    per_a = compute_player_PER(row_a, team_tot_a, season_a, refresh=refresh)
+    per_b = compute_player_PER(row_b, team_tot_b, season_b, refresh=refresh)
+
 
     # Build table (A on Left, B on Right)
     display = pd.DataFrame([
@@ -147,37 +157,69 @@ if mode == "Players":
 
     st.subheader("Player vs Player")
     st.dataframe(display, use_container_width=True, hide_index=True)
-    st.caption("*Season marked with an asterisk (*) means your chosen season wasn’t available; used the player’s most recent season instead.\nNote: PER shown is an approximation (uPER-style composite, not league-normalized).")
+    st.caption("*Season marked with an asterisk (*) means your chosen season wasn’t available; used the player’s most recent season instead.\nPER is computed using the full Hollinger/BBR formula (uPER → pace adjustment → normalized to league average = 15).")
 
 
 # ---------- TEAMS MODE (unchanged from your working version) ----------
+# ---------- TEAMS MODE ----------
 else:
     col = st.columns(3)
-    seasons = recent_seasons(10)
-    season = col[1].selectbox("Season", options=seasons)
+    season = col[1].selectbox("Season", options=recent_seasons(10))
 
+    # Load all teams and build name→team mapping
     teams = list_all_teams()
-    team_left  = col[0].selectbox("Left Team", options=[t["full_name"] for t in teams])
-    team_right = col[2].selectbox("Right Team", options=[t["full_name"] for t in teams])
+    team_names = [t["full_name"] for t in teams]
+    name_to_team = {t["full_name"]: t for t in teams}
 
-    tA = next(t for t in teams if t["full_name"] == team_left)
-    tB = next(t for t in teams if t["full_name"] == team_right)
+    # Dropdowns for selecting teams
+    team_left  = col[0].selectbox("Left Team",  options=team_names)
+    team_right = col[2].selectbox("Right Team", options=team_names)
 
+    # Get the full team info safely
+    tA = name_to_team.get(team_left)
+    tB = name_to_team.get(team_right)
+
+    # Helper to handle possible missing keys
+    def _team_id_safe(t):
+        if isinstance(t, dict):
+            for k in ("team_id", "TEAM_ID", "id"):
+                if k in t and t[k] is not None:
+                    return int(t[k])
+        return None
+
+    # ✅ DEFINE IDs HERE — these are what we’ll use everywhere
+    team_id_left  = _team_id_safe(tA)
+    team_id_right = _team_id_safe(tB)
+
+    if team_id_left is None or team_id_right is None:
+        st.error("Could not resolve team IDs. Click 'Refresh from API' and try again.")
+        st.stop()
+
+    # --- Team summary data ---
     with st.spinner("Loading team summaries…"):
-        A = get_team_record_and_ratings(tA["team_id"], season, refresh=refresh)
-        B = get_team_record_and_ratings(tB["team_id"], season, refresh=refresh)
+        A = get_team_record_and_ratings(team_id_left, season, refresh=refresh)
+        B = get_team_record_and_ratings(team_id_right, season, refresh=refresh)
 
     if A.empty or B.empty:
         st.error("Could not load team summaries.")
         st.stop()
 
+    # --- Compute ratings for tiles ---
     def _g(df, col, default=None):
         return float(df.get(col, pd.Series([default])).iloc[0] or default)
 
-    W_A, L_A = int(A.get("W", pd.Series([0])).iloc[0] or 0), int(A.get("L", pd.Series([0])).iloc[0] or 0)
-    W_B, L_B = int(B.get("W", pd.Series([0])).iloc[0] or 0), int(B.get("L", pd.Series([0])).iloc[0] or 0)
-    ORtg_A, DRtg_A, NRtg_A = _g(A,"OFF_RATING",0), _g(A,"DEF_RATING",0), _g(A,"NET_RATING",_g(A,"OFF_RATING",0)-_g(A,"DEF_RATING",0))
-    ORtg_B, DRtg_B, NRtg_B = _g(B,"OFF_RATING",0), _g(B,"DEF_RATING",0), _g(B,"NET_RATING",_g(B,"OFF_RATING",0)-_g(B,"DEF_RATING",0))
+    W_A = int(A.get("W", pd.Series([0])).iloc[0] or 0)
+    L_A = int(A.get("L", pd.Series([0])).iloc[0] or 0)
+    W_B = int(B.get("W", pd.Series([0])).iloc[0] or 0)
+    L_B = int(B.get("L", pd.Series([0])).iloc[0] or 0)
+
+    ORtg_A = _g(A, "OFF_RATING", 0.0)
+    DRtg_A = _g(A, "DEF_RATING", 0.0)
+    NRtg_A = _g(A, "NET_RATING", ORtg_A - DRtg_A)
+
+    ORtg_B = _g(B, "OFF_RATING", 0.0)
+    DRtg_B = _g(B, "DEF_RATING", 0.0)
+    NRtg_B = _g(B, "NET_RATING", ORtg_B - DRtg_B)
 
     st.subheader("Team vs Team")
     k1,k2,k3,k4 = st.columns(4)
@@ -186,33 +228,28 @@ else:
     k3.metric("Net Rating (Left)",  f"{NRtg_A:.1f}")
     k4.metric("Net Rating (Right)", f"{NRtg_B:.1f}")
 
-# --- Head-to-Head block ---
-with st.spinner("Computing head-to-head…"):
-    h2h_sum, h2h_games = get_team_h2h_games(tA["team_id"], tB["team_id"], season, refresh=refresh)
+    # --- Head-to-Head section ---
+    with st.spinner("Computing head-to-head…"):
+        h2h_sum, h2h_games = get_team_h2h_games(team_id_left, team_id_right, season, refresh=refresh)
 
-st.markdown(f"### Head-to-Head {season}")
-st.markdown(f"**{team_left} {h2h_sum['A_wins']} – {h2h_sum['B_wins']} {team_right}**  (Games: {h2h_sum['games']})")
+    st.markdown(f"### Head-to-Head {season}")
+    st.markdown(f"**{team_left} {h2h_sum['A_wins']} – {h2h_sum['B_wins']} {team_right}**  (Games: {h2h_sum['games']})")
 
-if not h2h_games.empty:
-    def _venue(matchup):
-        if pd.isna(matchup): return ""
-        s = str(matchup).lower()
-        return "(vs)" if "vs" in s else "(@)" if "@" in s else ""
-    def _res(row):
-        return f"{team_left} {int(row['PTS_A'])}, {team_right} {int(row['PTS_B'])}"
+    if not h2h_games.empty:
+        def _res(row):
+            return f"{team_left} {int(row['PTS_A'])}, {team_right} {int(row['PTS_B'])}"
+        display_games = pd.DataFrame({
+            "Date": pd.to_datetime(h2h_games["GAME_DATE"], errors='coerce').dt.strftime("%b %d"),
+            "Result": h2h_games.apply(_res, axis=1),
+        })
+        st.dataframe(display_games, use_container_width=True, hide_index=True)
+    else:
+        st.caption("No regular-season head-to-head games found for this season.")
 
-    display_games = pd.DataFrame({
-        "Date": pd.to_datetime(h2h_games["GAME_DATE"], errors="coerce").dt.strftime("%b %d"),
-        "Result": h2h_games.apply(_res, axis=1),
-    })
-    st.dataframe(display_games, use_container_width=True, hide_index=True)
-else:
-    st.caption("No regular-season head-to-head games found for this season.")
-
-# --- Ratings comparison table (ALWAYS render this) ---
-comp = pd.DataFrame([
-    {"Metric": "Off Rating", "Left": f"{ORtg_A:.1f}", "Right": f"{ORtg_B:.1f}"},
-    {"Metric": "Def Rating", "Left": f"{DRtg_A:.1f}", "Right": f"{DRtg_B:.1f}"},
-    {"Metric": "Net Rating", "Left": f"{NRtg_A:.1f}", "Right": f"{NRtg_B:.1f}"},
-])
-st.dataframe(comp, use_container_width=True, hide_index=True)
+    # --- Ratings comparison table ---
+    comp = pd.DataFrame([
+        {"Metric": "Off Rating", "Left": f"{ORtg_A:.1f}", "Right": f"{ORtg_B:.1f}"},
+        {"Metric": "Def Rating", "Left": f"{DRtg_A:.1f}", "Right": f"{DRtg_B:.1f}"},
+        {"Metric": "Net Rating", "Left": f"{NRtg_A:.1f}", "Right": f"{NRtg_B:.1f}"},
+    ])
+    st.dataframe(comp, use_container_width=True, hide_index=True)
