@@ -26,26 +26,23 @@ st.markdown("""
         margin-top: 1rem;
     }
     .feature-card {
-        background: #f8f9fa;
+        background: #ffffff;
         padding: 2rem;
         border-radius: 15px;
-        border-left: 5px solid #667eea;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        border: 2px solid #e0e0e0;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
         transition: transform 0.3s ease;
         height: 100%;
     }
     .feature-card:hover {
         transform: translateY(-5px);
-        box-shadow: 0 6px 20px rgba(0,0,0,0.15);
-    }
-    .feature-icon {
-        font-size: 3rem;
-        margin-bottom: 1rem;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        border-color: #1f77b4;
     }
     .feature-title {
         font-size: 1.5rem;
         font-weight: 600;
-        color: #333;
+        color: #1f77b4;
         margin-bottom: 0.5rem;
     }
     .feature-description {
@@ -54,12 +51,13 @@ st.markdown("""
         line-height: 1.6;
     }
     .stats-highlight {
-        background: linear-gradient(135deg, #1f77b4 0%, #4a90e2 100%);
+        background: #1f77b4;
         padding: 2rem;
         border-radius: 15px;
         color: white;
         text-align: center;
         margin: 2rem 0;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     .stats-number {
         font-size: 3rem;
@@ -159,7 +157,6 @@ col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.markdown("""
         <div class='feature-card'>
-            <div class='feature-icon'>📊</div>
             <div class='feature-title'>Player Stats</div>
             <p class='feature-description'>
                 Search and analyze individual player performance across seasons.
@@ -170,7 +167,6 @@ with col1:
 with col2:
     st.markdown("""
         <div class='feature-card'>
-            <div class='feature-icon'>🏆</div>
             <div class='feature-title'>Team Analytics</div>
             <p class='feature-description'>
                 Comprehensive team performance analysis including ratings, records, and player contributions.
@@ -181,7 +177,6 @@ with col2:
 with col3:
     st.markdown("""
         <div class='feature-card'>
-            <div class='feature-icon'>⚖️</div>
             <div class='feature-title'>Comparisons</div>
             <p class='feature-description'>
                 Head-to-head player and team comparisons with advanced metrics and matchup histories.
@@ -192,7 +187,6 @@ with col3:
 with col4:
     st.markdown("""
         <div class='feature-card'>
-            <div class='feature-icon'>🎯</div>
             <div class='feature-title'>Shot Charts</div>
             <p class='feature-description'>
                 Interactive visual analysis of shot locations, efficiency zones, and shooting patterns.
@@ -254,9 +248,10 @@ with getting_started_col1:
 
 with getting_started_col2:
     st.markdown("""
-        <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+        <div style='background: #1f77b4; 
                     padding: 2rem; border-radius: 12px; color: white; height: 100%;
-                    display: flex; flex-direction: column; justify-content: center;'>
+                    display: flex; flex-direction: column; justify-content: center;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);'>
             <h3 style='color: white; margin-top: 0; text-align: center;'>Quick Tip</h3>
             <p style='font-size: 1rem; line-height: 1.6; text-align: center; margin-bottom: 0;'>
                 Start with the <strong>Player Stats</strong> page to explore individual performances, 
@@ -278,7 +273,6 @@ nav_col1, nav_col2, nav_col3, nav_col4 = st.columns(4)
 with nav_col1:
     st.markdown("""
         <div class='nav-card'>
-            <div class='nav-icon'>📊</div>
             <div class='nav-title'>Player Stats</div>
         </div>
     """, unsafe_allow_html=True)
@@ -286,7 +280,6 @@ with nav_col1:
 with nav_col2:
     st.markdown("""
         <div class='nav-card'>
-            <div class='nav-icon'>🏆</div>
             <div class='nav-title'>Team Stats</div>
         </div>
     """, unsafe_allow_html=True)
@@ -294,7 +287,6 @@ with nav_col2:
 with nav_col3:
     st.markdown("""
         <div class='nav-card'>
-            <div class='nav-icon'>⚖️</div>
             <div class='nav-title'>Comparisons</div>
         </div>
     """, unsafe_allow_html=True)
@@ -302,7 +294,6 @@ with nav_col3:
 with nav_col4:
     st.markdown("""
         <div class='nav-card'>
-            <div class='nav-icon'>🎯</div>
             <div class='nav-title'>Shot Charts</div>
         </div>
     """, unsafe_allow_html=True)
