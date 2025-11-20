@@ -18,6 +18,7 @@ from nba_api.stats.endpoints import (
         teamyearbyyearstats,
         teamgamelog,
         leaguegamefinder,
+        shotchartdetail,
 
 )
 
@@ -937,6 +938,67 @@ def _league_constants(season, refresh=False):
         "lgFT": lgFT, "lgFTA": lgFTA, "lgFG": lgFG, "lgAST": lgAST,
         "lgTRB": lgTRB, "lgORB": lgORB, "lgPTS": lgPTS, "lgPF": lgPF
     }
+
+def get_player_shotchart(player_id, season, season_type="Regular Season", refresh=False):
+    """
+    Fetch shot chart data for a player for a given season and season type.
+    Uses nba_api ShotChartDetail and caches to CSV:
+
+        data/cache/shotchart_player_{player_id}_{season}_{season_type}.csv
+
+    Returns a DataFrame with at least:
+    LOC_X, LOC_Y, SHOT_MADE_FLAG, SHOT_ZONE_BASIC, SHOT_DISTANCE, GAME_DATE, PERIOD, ACTION_TYPE, SHOT_TYPE
+    """
+    if not player_id or not season:
+        return pd.DataFrame()
+
+    tag = season_type.replace(" ", "_")
+    cp = _p(f"shotchart_player_{player_id}_{season}_{tag}.csv")
+
+    if cp.exists() and not refresh:
+        try:
+            return _load_csv(cp)
+        except Exception:
+            pass  # fall through and refetch
+
+    try:
+        res = shotchartdetail.ShotChartDetail(
+            team_id=0,  # 0 => all teams for that player
+            player_id=player_id,
+            season_nullable=season,
+            season_type_all_star=season_type,
+            context_measure_simple="FGA",
+            timeout=40,
+        )
+        df = res.get_data_frames()[0]
+
+        if df.empty:
+            return pd.DataFrame()
+
+        keep = [
+            "LOC_X",
+            "LOC_Y",
+            "SHOT_MADE_FLAG",
+            "SHOT_ZONE_BASIC",
+            "SHOT_DISTANCE",
+            "GAME_DATE",
+            "PERIOD",
+            "ACTION_TYPE",
+            "SHOT_TYPE",
+        ]
+        keep = [c for c in keep if c in df.columns]
+
+        df = df[keep].copy()
+
+        # basic cleaning: restrict to half-court area used in most examples
+        if "LOC_Y" in df.columns:
+            df = df[df["LOC_Y"] <= 470]
+
+        _save_csv(cp, df)
+        return df
+    except Exception:
+        return pd.DataFrame()
+
 
 
 # BASE_DIR = Path(__file__).resolve().parents[2]  # repo root
