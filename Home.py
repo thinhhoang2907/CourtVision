@@ -6,7 +6,7 @@ st.set_page_config(page_title="CourtVision", page_icon="🏀", layout="wide")
 st.markdown("""
     <style>
     .hero-section {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: lightblue;
         padding: 4rem 2rem;
         border-radius: 20px;
         text-align: center;
@@ -22,7 +22,7 @@ st.markdown("""
     }
     .hero-subtitle {
         font-size: 1.5rem;
-        color: rgba(255,255,255,0.95);
+        color: black;
         margin-top: 1rem;
     }
     .feature-card {
@@ -108,7 +108,7 @@ st.markdown("""
 # Sidebar
 st.sidebar.markdown("""
     <div style='text-align: center; padding: 1rem;'>
-        <h2 style='color: #667eea; margin: 0;'>🏀 CourtVision</h2>
+        <h2 style='color: #667eea; margin: 0;'>CourtVision</h2>
         <p style='color: #666; font-size: 0.9rem; margin-top: 0.5rem;'>NBA Analytics Platform</p>
     </div>
 """, unsafe_allow_html=True)

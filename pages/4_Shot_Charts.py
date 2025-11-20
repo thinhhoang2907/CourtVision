@@ -12,7 +12,7 @@ from courtvision.data.nba_client import (
 # Page config for better styling
 st.set_page_config(layout="wide")
 
-st.title("🏀 Shot Charts & Efficiency")
+st.title("Shot Charts & Efficiency")
 
 # Add some styling with custom CSS
 st.markdown("""
@@ -32,15 +32,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- Global controls with better layout ---
-st.markdown("### ⚙️ Settings")
+st.markdown("### Settings")
 control_cols = st.columns([2, 2, 1, 1])
-season = control_cols[0].selectbox("📅 Season", options=recent_seasons(10))
-season_type = control_cols[1].selectbox("🏆 Season Type", options=["Regular Season", "Playoffs"])
-refresh = control_cols[3].button("🔄 Refresh", use_container_width=True)
+season = control_cols[0].selectbox("Season", options=recent_seasons(10))
+season_type = control_cols[1].selectbox(" Season Type", options=["Regular Season", "Playoffs"])
+refresh = control_cols[3].button("Refresh", use_container_width=True)
 
 st.divider()
 
-st.markdown("### 👥 Select Players to Compare")
+st.markdown("### Select Players to Compare")
 st.caption("Search for up to two players to visualize their shot profiles side-by-side")
 
 
@@ -52,7 +52,7 @@ def _pick_player(col, label: str, key_prefix: str):
     Returns dict {'player_id': int, 'name': str} or None.
     """
     col.markdown(f"**{label}**")
-    query = col.text_input(f"🔍 Search player name", key=f"{key_prefix}_query", label_visibility="collapsed")
+    query = col.text_input(f"Search player name", key=f"{key_prefix}_query", label_visibility="collapsed")
     query = query.strip()
     if not query:
         return None
@@ -85,7 +85,7 @@ def _pick_player(col, label: str, key_prefix: str):
 col_left, col_mid, col_right = st.columns([1, 0.1, 1])
 
 with col_left:
-    st.markdown("#### 🔵 Player A")
+    st.markdown("#### Player A")
     player_a = _pick_player(st, "Player A", "A")
 
 with col_mid:
@@ -95,7 +95,7 @@ with col_mid:
     st.markdown("### VS")
 
 with col_right:
-    st.markdown("#### 🔴 Player B")
+    st.markdown("#### Player B")
     player_b = _pick_player(st, "Player B", "B")
 
 if not player_a and not player_b:
@@ -114,7 +114,7 @@ st.divider()
 
 all_shots = []
 for p in players:
-    with st.spinner(f"🏀 Loading shots for {p['name']}..."):
+    with st.spinner(f"Loading shots for {p['name']}..."):
         df = get_player_shotchart(
             p["player_id"],
             season,
@@ -156,7 +156,7 @@ for p in players:
     })
 
 # Display stats
-st.markdown("### 📊 Shot Statistics")
+st.markdown("### Shot Statistics")
 stat_cols = st.columns(len(stats_data))
 for idx, stat in enumerate(stats_data):
     with stat_cols[idx]:
@@ -303,7 +303,7 @@ def apply_court_layout(fig):
 
 # ---------- Shot scatter chart ----------
 
-st.markdown("### 🎯 Shot Chart")
+st.markdown("### Shot Chart")
 st.caption("Each dot represents a shot attempt. Hover over shots to see details.")
 
 color_mode = st.radio(
@@ -378,7 +378,7 @@ st.plotly_chart(fig_scatter, use_container_width=True)
 st.divider()
 
 # ---------- Efficiency / Volume Heatmap ----------
-st.markdown("### 🔥 Efficiency Heatmap")
+st.markdown("### Efficiency Heatmap")
 st.caption("Darker areas show cold zones, brighter areas show hot zones. The court glows where players are most effective!")
 
 metric = st.radio(

@@ -27,7 +27,7 @@ st.markdown("""
         margin-bottom: 2rem;
     }
     .team-banner {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: royalblue;
         padding: 2rem;
         border-radius: 15px;
         margin-bottom: 2rem;
@@ -41,7 +41,7 @@ st.markdown("""
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     .leader-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: royalblue;
         padding: 1.5rem;
         border-radius: 12px;
         color: white;

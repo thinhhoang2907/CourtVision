@@ -28,7 +28,7 @@ st.markdown("""
         margin-bottom: 2rem;
     }
     .comparison-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: steelblue;
         padding: 1.5rem;
         border-radius: 12px;
         color: white;
@@ -73,7 +73,7 @@ st.markdown("""
         border-left: 3px solid #1f77b4;
     }
     .h2h-summary {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: steelblue;
         padding: 1.5rem;
         border-radius: 12px;
         color: white;
