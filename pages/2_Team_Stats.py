@@ -27,7 +27,7 @@ st.markdown("""
         margin-bottom: 2rem;
     }
     .team-banner {
-        background: royalblue;
+        background: steelblue;
         padding: 2rem;
         border-radius: 15px;
         margin-bottom: 2rem;
@@ -41,7 +41,7 @@ st.markdown("""
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     .leader-card {
-        background: royalblue;
+        background: steelblue;
         padding: 1.5rem;
         border-radius: 12px;
         color: white;

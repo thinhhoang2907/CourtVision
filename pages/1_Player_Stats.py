@@ -25,7 +25,7 @@ st.markdown("""
         margin-bottom: 2rem;
     }
     .stat-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: steelblue;
         padding: 1.5rem;
         border-radius: 10px;
         color: white;
@@ -105,7 +105,7 @@ card = get_player_card(player_id, refresh=refresh)
 
 # Player Header with enhanced styling
 st.markdown(f"""
-    <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+    <div style='background: steelblue; 
                 padding: 2rem; 
                 border-radius: 15px; 
                 margin-bottom: 2rem;
