@@ -6,7 +6,6 @@ CourtVision is a comprehensive Python and Streamlit-based web application that m
 
 ![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)
 ![Streamlit](https://img.shields.io/badge/streamlit-1.39.0-red)
-![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
@@ -21,7 +20,6 @@ CourtVision is a comprehensive Python and Streamlit-based web application that m
 - [Key Components](#-key-components)
 - [Data Sources](#-data-sources)
 - [Future Enhancements](#-future-enhancements)
-- [License](#-license)
 - [Acknowledgments](#-acknowledgments)
 
 ---
@@ -66,7 +64,7 @@ CourtVision is a comprehensive Python and Streamlit-based web application that m
 
 ##  Demo
 
-**Live Application**: [CourtVision on Streamlit Cloud](#) *https://courtvision2526.streamlit.app/*
+**Live Application**: [CourtVision on Streamlit Cloud](#) *(https://courtvision2526.streamlit.app/)*
 
 **Local Demo**:
 ```bash
@@ -237,7 +235,7 @@ courtvision/
 
 ##  Data Sources
 
-CourtVision uses the official NBA Stats API through the `nba_api` Python library:
+CourtVision uses the NBA Stats API through the `nba_api` Python library:
 
 - **Player Statistics**: Basic and advanced metrics dating back several decades
 - **Team Statistics**: Current and historical team performance data
@@ -279,12 +277,6 @@ CourtVision uses the official NBA Stats API through the `nba_api` Python library
 
 ---
 
-
-##  License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
 
 ##  Acknowledgments
 
