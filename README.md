@@ -5,7 +5,7 @@
 CourtVision is a comprehensive Python and Streamlit-based web application that makes basketball statistics accessible and engaging for fans of all levels. The platform provides interactive visualizations, detailed player and team analytics, and powerful comparison tools to help users understand basketball performance data.
 
 ![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)
-![Streamlit](https://img.shields.io/badge/streamlit-1.39.0-red)
+![Streamlit](https://img.shields.io/badge/streamlit-1.50.0-red)
 
 ---
 
